@@ -1,0 +1,1 @@
+"""MinecraftRLLab stable bootstrap installer."""

@@ -48,5 +48,16 @@ class GitHubReleaseClient:
 
     def newest(self, channel: BuildChannel) -> ReleaseBuild | None:
         releases = self.list_releases()
-        candidates = [release for release in releases if release.channel is channel]
+        candidates = [release for release in releases if release.channel is channel and release.build_number is not None]
         return candidates[0] if candidates else None
+
+    @staticmethod
+    def is_newer(release: ReleaseBuild, installed_build: str | int) -> bool:
+        available = release.build_number
+        if available is None:
+            return False
+        try:
+            installed = int(str(installed_build).strip())
+        except (TypeError, ValueError):
+            return False
+        return available > installed

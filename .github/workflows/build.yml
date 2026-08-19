@@ -93,6 +93,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     needs: metadata
+    env:
+      NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-cache
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +114,14 @@ jobs:
           cache-dependency-path: |
             client/requirements.txt
             client/requirements-build.txt
+
+      - name: ⚡ Restore Nuitka compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .nuitka-cache
+          key: nuitka-${{ runner.os }}-${{ runner.arch }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('client/requirements.txt', 'client/requirements-build.txt', 'tools/build_client.py') }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ runner.arch }}-py${{ env.PYTHON_VERSION }}-
 
       - name: 🐧 Linux native prerequisites
         if: runner.os == 'Linux'
@@ -133,6 +143,7 @@ jobs:
           python --version
           python -m nuitka --version
           echo "Dependency mode: prebuilt wheels"
+          echo "Nuitka cache: $NUITKA_CACHE_DIR"
 
       - name: 🧬 Generate + compile native application
         env:
@@ -236,6 +247,7 @@ jobs:
           - ✅ Windows native client built
           - ✅ Linux native client built
           - 📦 Dependencies installed from prebuilt wheels
+          - ⚡ Reusable Nuitka compiler cache enabled
           - ⏳ Verification queued/running
           - Commit: \`${GITHUB_SHA}\`
           BODY
