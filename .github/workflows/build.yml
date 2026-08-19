@@ -17,8 +17,6 @@ env:
   PYTHON_VERSION: '3.13'
   JAVA_VERSION: '25'
   MCRL_VERSION: 0.3.0-dev
-  MCRL_NUITKA_VISIBLE_LOG_LIMIT: '8000'
-  MCRL_GRADLE_VISIBLE_LOG_LIMIT: '5000'
 
 jobs:
   metadata:
@@ -65,8 +63,8 @@ jobs:
         run: |
           python tools/log_mux.py \
             --log .build-logs/plugin-gradle.log \
-            --max-visible "$MCRL_GRADLE_VISIBLE_LOG_LIMIT" \
-            --sample-every 8 \
+            --sample-every 16 \
+            --head-lines 40 \
             -- gradle :plugin:jar --console=plain -PmcrlVersion=${{ needs.metadata.outputs.tag }}
       - name: 🧾 Upload complete plugin build log
         if: always()
@@ -142,9 +140,8 @@ jobs:
         run: |
           python tools/log_mux.py \
             --log .build-logs/nuitka.log \
-            --max-visible "$MCRL_NUITKA_VISIBLE_LOG_LIMIT" \
-            --sample-every 10 \
-            --head-lines 120 \
+            --sample-every 25 \
+            --head-lines 60 \
             -- python tools/build_client.py --output dist
 
       - name: 📂 Locate standalone distribution

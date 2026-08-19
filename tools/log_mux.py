@@ -13,19 +13,16 @@ IMPORTANT_RE = re.compile(
 )
 PROGRESS_RE = re.compile(r"^\s*\[\d+[/\\]\d+\]")
 STATUS_RE = re.compile(
-    r"(?i)^(-- |cmake|ninja|nuitka|scons|linking|generating|installing|building wheel|successfully|finished|completed|built target|\[notice\])"
+    r"(?i)^(-- |linking|generating|installing|building wheel|successfully|finished|completed|built target|\[notice\])"
 )
 
 
 @dataclass
 class VisibleLogSampler:
-    max_visible: int = 8_000
-    sample_every: int = 12
-    head_lines: int = 80
+    sample_every: int = 20
+    head_lines: int = 60
 
     def __post_init__(self) -> None:
-        if self.max_visible < 1:
-            raise ValueError("max_visible must be positive")
         if self.sample_every < 1:
             raise ValueError("sample_every must be positive")
         if self.head_lines < 0:
@@ -35,14 +32,9 @@ class VisibleLogSampler:
         self.suppressed = 0
         self._progress_seen = 0
         self._other_seen = 0
-        self.limit_reached = False
 
     def should_emit(self, line: str) -> bool:
         self.total += 1
-        if self.visible >= self.max_visible:
-            self.suppressed += 1
-            self.limit_reached = True
-            return False
 
         important = bool(IMPORTANT_RE.search(line))
         if self.total <= self.head_lines or important:
@@ -72,14 +64,13 @@ def run_logged(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     log_path: Path,
-    max_visible: int = 8_000,
-    sample_every: int = 12,
-    head_lines: int = 80,
+    sample_every: int = 20,
+    head_lines: int = 60,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    sampler = VisibleLogSampler(max_visible=max_visible, sample_every=sample_every, head_lines=head_lines)
+    sampler = VisibleLogSampler(sample_every=sample_every, head_lines=head_lines)
 
     if len(cmd) >= 2 and cmd[1] in {"-c", "-m"}:
         preview = f"{cmd[0]} {cmd[1]} <payload>"
@@ -92,6 +83,7 @@ def run_logged(
     if len(preview) > 240:
         preview = preview[:237] + "..."
     print("+ " + preview, flush=True)
+
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -115,12 +107,10 @@ def run_logged(
 
     print(
         f"LOGMUX visible={sampler.visible} total={sampler.total} suppressed={sampler.suppressed} "
-        f"limit={sampler.max_visible}",
+        f"sampling=1/{sampler.sample_every}",
         flush=True,
     )
     print(f"Full log: {log_path}", flush=True)
-    if sampler.limit_reached:
-        print("LOGMUX hard cap reached; remaining output is preserved only in the full log artifact.", flush=True)
 
     completed = subprocess.CompletedProcess(cmd, return_code)
     if check and return_code != 0:
@@ -131,9 +121,8 @@ def run_logged(
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stream a sampled build log while preserving complete output to a file")
     parser.add_argument("--log", required=True)
-    parser.add_argument("--max-visible", type=int, default=8_000)
-    parser.add_argument("--sample-every", type=int, default=12)
-    parser.add_argument("--head-lines", type=int, default=80)
+    parser.add_argument("--sample-every", type=int, default=20)
+    parser.add_argument("--head-lines", type=int, default=60)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.command and args.command[0] == "--":
@@ -148,7 +137,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     result = run_logged(
         list(args.command),
         log_path=Path(args.log),
-        max_visible=args.max_visible,
         sample_every=args.sample_every,
         head_lines=args.head_lines,
         check=False,

@@ -43,8 +43,6 @@ def main() -> int:
         "--standalone",
         "--enable-plugin=pyside6",
         "--show-scons",
-        "--verbose",
-        "--show-progress",
         "--assume-yes-for-downloads",
         "--output-dir=" + str(out),
         "--output-filename=MinecraftRLLab",

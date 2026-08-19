@@ -39,8 +39,10 @@ def test_obsolete_forge_files_are_removed():
         assert not path.exists(), path
 
 
-def test_native_build_and_log_caps_remain_enabled():
+def test_native_build_uses_sampling_without_hard_caps():
     assert "python tools/build_client.py --output dist" in WORKFLOW
-    assert "MCRL_NUITKA_VISIBLE_LOG_LIMIT" in WORKFLOW
-    assert "MCRL_GRADLE_VISIBLE_LOG_LIMIT" in WORKFLOW
     assert "tools/log_mux.py" in WORKFLOW
+    assert "VISIBLE_LOG_LIMIT" not in WORKFLOW
+    assert "--max-visible" not in WORKFLOW
+    assert "--sample-every 16" in WORKFLOW
+    assert "--sample-every 25" in WORKFLOW

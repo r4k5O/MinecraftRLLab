@@ -13,56 +13,53 @@ if str(ROOT) not in sys.path:
 
 
 class LogMuxTests(unittest.TestCase):
-    def test_sampler_caps_visible_output(self):
+    def test_sampler_has_no_hard_cap_and_samples_long_streams(self):
         from tools.log_mux import VisibleLogSampler
 
-        sampler = VisibleLogSampler(max_visible=25, sample_every=5, head_lines=3)
+        self.assertNotIn("max_visible", VisibleLogSampler.__dataclass_fields__)
+        sampler = VisibleLogSampler(sample_every=10, head_lines=3)
         emitted = []
-        for i in range(500):
-            line = f"[{i+1}/500] Building CXX object file_{i}.cpp"
+        for i in range(100_000):
+            line = f"[{i+1}/100000] Building CXX object file_{i}.cpp"
             if sampler.should_emit(line):
                 emitted.append(line)
 
-        self.assertLessEqual(len(emitted), 25)
-        self.assertGreater(len(emitted), 3)
-        self.assertTrue(sampler.limit_reached or sampler.suppressed > 0)
+        self.assertGreater(len(emitted), 1_000)
+        self.assertLess(len(emitted), 20_000)
+        self.assertFalse(hasattr(sampler, "limit_reached"))
 
-    def test_important_lines_are_prioritized_before_limit(self):
+    def test_important_lines_are_always_emitted(self):
         from tools.log_mux import VisibleLogSampler
 
-        sampler = VisibleLogSampler(max_visible=20, sample_every=50, head_lines=1)
-        self.assertTrue(sampler.should_emit("starting"))
-        for i in range(10):
-            sampler.should_emit(f"[{i+1}/100] Building CXX object x{i}.cpp")
+        sampler = VisibleLogSampler(sample_every=10_000, head_lines=0)
         self.assertTrue(sampler.should_emit("warning: something suspicious"))
         self.assertTrue(sampler.should_emit("fatal error: compiler exploded"))
 
-    def test_run_logged_preserves_full_log_while_capping_console(self):
+    def test_run_logged_preserves_full_log_while_sampling_console(self):
         from tools.log_mux import run_logged
 
         with tempfile.TemporaryDirectory() as td:
             log = Path(td) / "full.log"
             out = io.StringIO()
-            cmd = [sys.executable, "-c", "for i in range(200): print(f'[{i+1}/200] Building CXX object x{i}.cpp')"]
+            cmd = [sys.executable, "-c", "for i in range(2000): print(f'[{i+1}/2000] Building CXX object x{i}.cpp')"]
             with contextlib.redirect_stdout(out):
-                run_logged(cmd, log_path=log, max_visible=30, sample_every=7)
+                run_logged(cmd, log_path=log, sample_every=20, head_lines=5)
 
             full_lines = log.read_text(encoding="utf-8").splitlines()
             visible_compile_lines = [line for line in out.getvalue().splitlines() if "Building CXX object" in line]
-            self.assertEqual(len(full_lines), 200)
-            self.assertLessEqual(len(visible_compile_lines), 30)
+            self.assertEqual(len(full_lines), 2000)
+            self.assertGreater(len(visible_compile_lines), 5)
+            self.assertLess(len(visible_compile_lines), 200)
             self.assertIn("Full log:", out.getvalue())
+            self.assertNotIn("hard cap", out.getvalue().lower())
 
 
-class WorkflowBudgetTests(unittest.TestCase):
-    def test_build_workflow_caps_all_large_output_sources(self):
-        workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
-        self.assertIn("MCRL_FORGE_VISIBLE_LOG_LIMIT: '12000'", workflow)
-        self.assertIn("MCRL_NUITKA_VISIBLE_LOG_LIMIT: '8000'", workflow)
-        self.assertIn("MCRL_GRADLE_VISIBLE_LOG_LIMIT: '5000'", workflow)
-        self.assertIn("tools/log_mux.py", workflow)
-        self.assertIn("build-logs-${{ matrix.platform }}", workflow)
-        self.assertNotIn('find "$DIST_DIR" -type f | sort', workflow)
+class BuildClientVerbosityTests(unittest.TestCase):
+    def test_nuitka_keeps_scons_but_drops_extra_verbosity(self):
+        build = (ROOT / "tools" / "build_client.py").read_text(encoding="utf-8")
+        self.assertIn('"--show-scons"', build)
+        self.assertNotIn('"--verbose"', build)
+        self.assertNotIn('"--show-progress"', build)
 
 
 if __name__ == "__main__":
