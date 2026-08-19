@@ -17,6 +17,9 @@ env:
   PYTHON_VERSION: '3.13'
   JAVA_VERSION: '25'
   MCRL_VERSION: 0.3.0-dev
+  MCRL_FORGE_VISIBLE_LOG_LIMIT: '12000'
+  MCRL_NUITKA_VISIBLE_LOG_LIMIT: '8000'
+  MCRL_GRADLE_VISIBLE_LOG_LIMIT: '5000'
 
 jobs:
   metadata:
@@ -74,7 +77,20 @@ jobs:
           java -version
           gradle --version
       - name: 🔨 Compile and link plugin JAR
-        run: gradle :plugin:jar --console=plain --info -PmcrlVersion=${{ needs.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          python tools/log_mux.py \
+            --log .build-logs/plugin-gradle.log \
+            --max-visible "$MCRL_GRADLE_VISIBLE_LOG_LIMIT" \
+            --sample-every 8 \
+            -- gradle :plugin:jar --console=plain -PmcrlVersion=${{ needs.metadata.outputs.tag }}
+      - name: 🧾 Upload complete plugin build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-plugin-${{ needs.metadata.outputs.build }}
+          path: .build-logs/plugin-gradle.log
+          if-no-files-found: warn
       - name: 📦 Stage plugin
         shell: bash
         run: |
@@ -158,7 +174,12 @@ jobs:
         shell: bash
         run: |
           python tools/full_source_deps.py --plan
-          python tools/full_source_deps.py --work .forge/source --wheelhouse .forge/wheels
+          python tools/log_mux.py \
+            --log .build-logs/full-source.log \
+            --max-visible "$MCRL_FORGE_VISIBLE_LOG_LIMIT" \
+            --sample-every 20 \
+            --head-lines 120 \
+            -- python tools/full_source_deps.py --work .forge/source --wheelhouse .forge/wheels
 
       - name: 🔎 Nuitka / compiler information
         shell: bash
@@ -173,7 +194,13 @@ jobs:
           MCRL_VERSION: ${{ env.MCRL_VERSION }}
           MCRL_BUILD_MODE: ${{ needs.metadata.outputs.mode }}
         shell: bash
-        run: python tools/build_client.py --output dist
+        run: |
+          python tools/log_mux.py \
+            --log .build-logs/nuitka.log \
+            --max-visible "$MCRL_NUITKA_VISIBLE_LOG_LIMIT" \
+            --sample-every 10 \
+            --head-lines 120 \
+            -- python tools/build_client.py --output dist
 
       - name: 📂 Locate standalone distribution
         id: dist
@@ -183,7 +210,15 @@ jobs:
           test -n "$DIST_DIR"
           echo "dir=$DIST_DIR" >> "$GITHUB_OUTPUT"
           echo "Native files: $(find "$DIST_DIR" -type f | wc -l)"
-          find "$DIST_DIR" -type f | sort
+          echo "Standalone distribution located at: $DIST_DIR"
+
+      - name: 🧾 Upload complete native build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.platform }}-${{ needs.metadata.outputs.build }}
+          path: .build-logs/
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:
