@@ -63,8 +63,10 @@ jobs:
         run: |
           python tools/log_mux.py \
             --log .build-logs/plugin-gradle.log \
-            --sample-every 16 \
-            --head-lines 40 \
+            --sample-every 4 \
+            --progress-every 1 \
+            --compiler-every 1 \
+            --head-lines 60 \
             -- gradle :plugin:jar --console=plain -PmcrlVersion=${{ needs.metadata.outputs.tag }}
       - name: 🧾 Upload complete plugin build log
         if: always()
@@ -140,8 +142,10 @@ jobs:
         run: |
           python tools/log_mux.py \
             --log .build-logs/nuitka.log \
-            --sample-every 25 \
-            --head-lines 60 \
+            --sample-every 8 \
+            --progress-every 1 \
+            --compiler-every 1 \
+            --head-lines 100 \
             -- python tools/build_client.py --output dist
 
       - name: 📂 Locate standalone distribution
