@@ -1,0 +1,277 @@
+name: 🔨 Build & Release MinecraftRLLab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: mcrl-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.13'
+  JAVA_VERSION: '25'
+  MCRL_VERSION: 0.3.0-dev
+
+jobs:
+  metadata:
+    name: 🧾 Build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      build: ${{ steps.meta.outputs.build }}
+      mode: ${{ steps.forge.outputs.mode }}
+      forge: ${{ steps.forge.outputs.forge }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - id: meta
+        shell: bash
+        run: |
+          BUILD="${GITHUB_RUN_NUMBER}"
+          TAG="nightly-${BUILD}-${GITHUB_SHA::8}"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "# 🔨 MinecraftRLLab Build #$BUILD" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release starts as **Nightly / verification pending**." >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve build path
+        id: forge
+        env:
+          MCRL_FORGE_KEY: ${{ secrets.MCRL_FORGE_KEY }}
+        shell: bash
+        run: |
+          python tools/forge_gate.py --repo . --github-output "$GITHUB_OUTPUT"
+          MODE=$(grep '^mode=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+          if [ "$MODE" = "full-source" ]; then
+            echo "🔥 A deeper furnace has awakened." >> "$GITHUB_STEP_SUMMARY"
+            echo "Build mode: **full-source**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Build mode: **normal**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  plugin:
+    name: ☕ Paper 26.2 plugin
+    runs-on: ubuntu-latest
+    needs: metadata
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.7.0'
+      - name: 🔍 Toolchain
+        run: |
+          java -version
+          gradle --version
+      - name: 🔨 Compile and link plugin JAR
+        run: gradle :plugin:jar --console=plain --info -PmcrlVersion=${{ needs.metadata.outputs.tag }}
+      - name: 📦 Stage plugin
+        shell: bash
+        run: |
+          mkdir -p staged-plugin
+          cp plugin/build/libs/*.jar staged-plugin/MinecraftRLLab-Plugin.jar
+          jar tf staged-plugin/MinecraftRLLab-Plugin.jar | tee plugin-contents.txt
+          sha256sum staged-plugin/MinecraftRLLab-Plugin.jar | tee staged-plugin/MinecraftRLLab-Plugin.jar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ needs.metadata.outputs.build }}
+          path: staged-plugin/
+          if-no-files-found: error
+
+  client:
+    name: 🧠 Native client • ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            platform: Windows
+          - os: ubuntu-latest
+            label: Linux x64
+            platform: Linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            client/requirements.txt
+            client/requirements-build.txt
+
+      - name: 🐧 Linux native prerequisites • normal
+        if: runner.os == 'Linux' && needs.metadata.outputs.mode == 'normal'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf build-essential ccache libgl1 libegl1 libxkbcommon-x11-0
+
+      - name: 🐧 Linux native forge prerequisites
+        if: runner.os == 'Linux' && needs.metadata.outputs.mode == 'full-source'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang libclang-dev llvm-dev cmake ninja-build git perl pkg-config patchelf ccache \
+            libgl1 libegl1 libgl1-mesa-dev libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
+            libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
+            libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: 🪟 Windows native forge prerequisites
+        if: runner.os == 'Windows' && needs.metadata.outputs.mode == 'full-source'
+        shell: pwsh
+        run: |
+          choco install llvm ninja cmake -y --no-progress
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: 📚 Install normal Python + native build dependencies
+        if: needs.metadata.outputs.mode == 'normal'
+        working-directory: client
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -r requirements-build.txt
+
+      - name: 🔥 Forge every application dependency from source
+        if: needs.metadata.outputs.mode == 'full-source'
+        env:
+          MCRL_FORGE_JOBS: '8'
+          MCRL_QT_REF: '6.11'
+          MCRL_PYSIDE_REF: '6.11'
+          MCRL_TORCH_REF: 'main'
+        shell: bash
+        run: |
+          python tools/full_source_deps.py --plan
+          python tools/full_source_deps.py --work .forge/source --wheelhouse .forge/wheels
+
+      - name: 🔎 Nuitka / compiler information
+        shell: bash
+        run: |
+          python --version
+          python -m nuitka --version
+          echo "Build mode: ${{ needs.metadata.outputs.mode }}"
+
+      - name: 🧬 Generate + compile native application
+        env:
+          GITHUB_RUN_NUMBER: ${{ needs.metadata.outputs.build }}
+          MCRL_VERSION: ${{ env.MCRL_VERSION }}
+          MCRL_BUILD_MODE: ${{ needs.metadata.outputs.mode }}
+        shell: bash
+        run: python tools/build_client.py --output dist
+
+      - name: 📂 Locate standalone distribution
+        id: dist
+        shell: bash
+        run: |
+          DIST_DIR=$(find dist -maxdepth 1 -type d -name '*.dist' | head -1)
+          test -n "$DIST_DIR"
+          echo "dir=$DIST_DIR" >> "$GITHUB_OUTPUT"
+          echo "Native files: $(find "$DIST_DIR" -type f | wc -l)"
+          find "$DIST_DIR" -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.platform }}-${{ needs.metadata.outputs.build }}
+          path: ${{ steps.dist.outputs.dir }}/
+          if-no-files-found: error
+
+  package:
+    name: 📦 Package • ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    needs: [metadata, plugin, client]
+    strategy:
+      matrix:
+        platform: [Windows, Linux]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-${{ needs.metadata.outputs.build }}
+          path: downloads/plugin
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-${{ matrix.platform }}-${{ needs.metadata.outputs.build }}
+          path: downloads/client
+      - name: 🧩 Assemble client + Paper plugin
+        run: |
+          python tools/package_release.py \
+            --platform ${{ matrix.platform }} \
+            --client-dist downloads/client \
+            --plugin downloads/plugin/MinecraftRLLab-Plugin.jar \
+            --build ${{ needs.metadata.outputs.build }} \
+            --output packages
+          find packages -maxdepth 2 -type f -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.platform }}-${{ needs.metadata.outputs.build }}
+          path: packages/*
+          if-no-files-found: error
+
+  release:
+    name: 🌙 Publish Nightly immediately
+    runs-on: ubuntu-latest
+    needs: [metadata, package]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*-${{ needs.metadata.outputs.build }}
+          path: release-assets
+          merge-multiple: true
+      - name: 🔐 Combined checksums
+        shell: bash
+        run: |
+          find release-assets -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 | sort -z | xargs -0 sha256sum | tee release-assets/SHA256SUMS.txt
+      - name: 🌙 Create Nightly release BEFORE tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          BUILD: ${{ needs.metadata.outputs.build }}
+          BUILD_MODE: ${{ needs.metadata.outputs.mode }}
+        shell: bash
+        run: |
+          MODE_LINE=""
+          if [ "$BUILD_MODE" = "full-source" ]; then
+            MODE_LINE="- 🔥 Application dependencies compiled from source"
+          fi
+          cat > release-body.md <<BODY
+          # 🌙 MinecraftRLLab Build #${BUILD}
+
+          **verification:pending**
+
+          This build compiled successfully and is available immediately. The release verification workflow starts only after publishing and waits until the build queue is empty.
+
+          - ✅ Paper 26.2 plugin built
+          - ✅ Windows native client built
+          - ✅ Linux native client built
+          ${MODE_LINE}
+          - ⏳ Verification queued/running
+          - Commit: \`${GITHUB_SHA}\`
+          BODY
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "🌙 MinecraftRLLab Nightly #${BUILD}" \
+            --notes-file release-body.md \
+            --prerelease \
+            release-assets/*
+      - name: ✨ Summary
+        run: |
+          echo "## 🌙 Nightly published" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tests are intentionally **not** part of this workflow." >> "$GITHUB_STEP_SUMMARY"
+          echo "The release-triggered verification workflow now waits for the build queue." >> "$GITHUB_STEP_SUMMARY"

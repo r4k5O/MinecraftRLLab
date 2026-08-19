@@ -95,7 +95,7 @@ The GitHub build resolves the Paper 26.2 API from Paper's Maven repository. For 
 
 ```bash
 python tools/prepare_paper_libs.py /path/to/paper-26.2.jar
-./gradlew :plugin:jar
+gradle :plugin:jar
 ```
 
 Java 25 is required.

@@ -1,0 +1,15 @@
+name: MinecraftRLLab
+version: 0.1.0
+main: dev.r4k5o.minecraftrl.MinecraftRLLabPlugin
+api-version: '26.2'
+author: r4k5O
+load: POSTWORLD
+commands:
+  rl:
+    description: Manage the Minecraft RL training environment.
+    usage: /rl <status|token|bind|reset>
+    permission: minecraftrl.admin
+permissions:
+  minecraftrl.admin:
+    description: Allows administration of MinecraftRLLab.
+    default: op

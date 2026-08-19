@@ -1,0 +1,17 @@
+.gradle/
+build/
+**/build/
+**/__pycache__/
+*.pyc
+.venv/
+dist/
+packages/
+toolchain/
+client/BUILD_INFO.json
+*.pt
+.idea/
+.vscode/
+
+# Rebuilt by GitHub Actions
+server-plugin/*.jar
+gradle/wrapper/gradle-wrapper.jar

@@ -1,0 +1,14 @@
+bridge:
+  host: "127.0.0.1"
+  port: 8765
+  token: ""
+  request-timeout-seconds: 10
+training:
+  world: "rl_training"
+  seed: 7349215
+  episode-stride: 2048
+  max-steps: 2000
+  step-delay-ticks: 3
+  move-speed: 0.28
+  turn-degrees: 15.0
+  look-degrees: 10.0

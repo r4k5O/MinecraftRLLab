@@ -1,0 +1,9 @@
+[project]
+name = "minecraft-rl-lab"
+version = "0.3.0.dev0"
+description = "Minecraft Paper reinforcement learning lab with a PySide6 desktop client"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["client", "."]
+testpaths = ["client/tests", "tools/tests"]
