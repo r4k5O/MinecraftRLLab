@@ -12,50 +12,70 @@ IMPORTANT_RE = re.compile(
     r"(?i)(fatal|error:|\berror\b|warning:|\bwarning\b|failed|failure|traceback|undefined reference|exception)"
 )
 PROGRESS_RE = re.compile(r"^\s*\[\d+[/\\]\d+\]")
+COMPILER_RE = re.compile(
+    r"(^|\s)"
+    r"(?:gcc|g\+\+|clang|clang\+\+|cl(?:\.exe)?|link(?:\.exe)?|ld(?:\.exe)?|ccache)"
+    r"(?:\s|$)"
+    r"|\b(?:building|linking)\s+(?:c|cxx|rc)?\s*(?:object|static library|shared library|executable)\b"
+    r"|[\\/](?:cl|link)\.exe\b"
+    r"|^(?:nuitka-scons|scons:)",
+    re.IGNORECASE,
+)
 STATUS_RE = re.compile(
-    r"(?i)^(-- |linking|generating|installing|building wheel|successfully|finished|completed|built target|\[notice\])"
+    r"(?i)^(-- |nuitka-progress|generating|installing|building wheel|successfully|finished|completed|built target|\[notice\])"
 )
 
 
 @dataclass
 class VisibleLogSampler:
-    sample_every: int = 20
-    head_lines: int = 60
+    sample_every: int = 8
+    head_lines: int = 80
+    progress_every: int = 1
+    compiler_every: int = 1
 
     def __post_init__(self) -> None:
-        if self.sample_every < 1:
-            raise ValueError("sample_every must be positive")
+        for name, value in (
+            ("sample_every", self.sample_every),
+            ("progress_every", self.progress_every),
+            ("compiler_every", self.compiler_every),
+        ):
+            if value < 1:
+                raise ValueError(f"{name} must be positive")
         if self.head_lines < 0:
             raise ValueError("head_lines must not be negative")
         self.total = 0
         self.visible = 0
         self.suppressed = 0
         self._progress_seen = 0
+        self._compiler_seen = 0
         self._other_seen = 0
+
+    def _record(self, emit: bool) -> bool:
+        if emit:
+            self.visible += 1
+            return True
+        self.suppressed += 1
+        return False
 
     def should_emit(self, line: str) -> bool:
         self.total += 1
 
-        important = bool(IMPORTANT_RE.search(line))
-        if self.total <= self.head_lines or important:
-            self.visible += 1
-            return True
+        if self.total <= self.head_lines or IMPORTANT_RE.search(line):
+            return self._record(True)
 
         if PROGRESS_RE.search(line):
             self._progress_seen += 1
-            emit = self._progress_seen % self.sample_every == 0
-        elif STATUS_RE.search(line):
-            emit = True
-        else:
-            self._other_seen += 1
-            emit = self._other_seen % (self.sample_every * 4) == 0
+            return self._record(self._progress_seen % self.progress_every == 0)
 
-        if emit:
-            self.visible += 1
-            return True
+        if COMPILER_RE.search(line):
+            self._compiler_seen += 1
+            return self._record(self._compiler_seen % self.compiler_every == 0)
 
-        self.suppressed += 1
-        return False
+        if STATUS_RE.search(line):
+            return self._record(True)
+
+        self._other_seen += 1
+        return self._record(self._other_seen % self.sample_every == 0)
 
 
 def run_logged(
@@ -64,13 +84,20 @@ def run_logged(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     log_path: Path,
-    sample_every: int = 20,
-    head_lines: int = 60,
+    sample_every: int = 8,
+    head_lines: int = 80,
+    progress_every: int = 1,
+    compiler_every: int = 1,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    sampler = VisibleLogSampler(sample_every=sample_every, head_lines=head_lines)
+    sampler = VisibleLogSampler(
+        sample_every=sample_every,
+        head_lines=head_lines,
+        progress_every=progress_every,
+        compiler_every=compiler_every,
+    )
 
     if len(cmd) >= 2 and cmd[1] in {"-c", "-m"}:
         preview = f"{cmd[0]} {cmd[1]} <payload>"
@@ -107,7 +134,7 @@ def run_logged(
 
     print(
         f"LOGMUX visible={sampler.visible} total={sampler.total} suppressed={sampler.suppressed} "
-        f"sampling=1/{sampler.sample_every}",
+        f"progress=1/{sampler.progress_every} compiler=1/{sampler.compiler_every} other=1/{sampler.sample_every}",
         flush=True,
     )
     print(f"Full log: {log_path}", flush=True)
@@ -119,10 +146,12 @@ def run_logged(
 
 
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Stream a sampled build log while preserving complete output to a file")
+    parser = argparse.ArgumentParser(description="Stream useful build output while preserving the complete log")
     parser.add_argument("--log", required=True)
-    parser.add_argument("--sample-every", type=int, default=20)
-    parser.add_argument("--head-lines", type=int, default=60)
+    parser.add_argument("--sample-every", type=int, default=8)
+    parser.add_argument("--progress-every", type=int, default=1)
+    parser.add_argument("--compiler-every", type=int, default=1)
+    parser.add_argument("--head-lines", type=int, default=80)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.command and args.command[0] == "--":
@@ -138,6 +167,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         list(args.command),
         log_path=Path(args.log),
         sample_every=args.sample_every,
+        progress_every=args.progress_every,
+        compiler_every=args.compiler_every,
         head_lines=args.head_lines,
         check=False,
     )
