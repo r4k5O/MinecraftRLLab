@@ -33,9 +33,11 @@ jobs:
           - os: windows-latest
             platform: Windows
             filename: MinecraftRLLab-Setup.exe
+            pythonpath: 'client;.'
           - os: ubuntu-latest
             platform: Linux
             filename: MinecraftRLLab-Setup
+            pythonpath: 'client:.'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +52,7 @@ jobs:
       - name: 🔨 Compile stable bootstrap
         shell: bash
         env:
-          PYTHONPATH: client:.
+          PYTHONPATH: ${{ matrix.pythonpath }}
           NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-setup-cache
         run: |
           python -m nuitka \

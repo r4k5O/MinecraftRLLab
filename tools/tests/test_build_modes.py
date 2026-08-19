@@ -38,6 +38,12 @@ class BuildModesTest(unittest.TestCase):
         for token in ("MinecraftRLLab-Setup.exe", "MinecraftRLLab-Setup", "paths:", "installer/**", "gh release create setup", "--latest=false"):
             self.assertIn(token, INSTALLER_WORKFLOW)
 
+    def test_installer_uses_platform_correct_pythonpath(self):
+        self.assertIn("pythonpath: 'client;.'", INSTALLER_WORKFLOW)
+        self.assertIn("pythonpath: 'client:.'", INSTALLER_WORKFLOW)
+        self.assertIn("PYTHONPATH: ${{ matrix.pythonpath }}", INSTALLER_WORKFLOW)
+        self.assertNotIn("PYTHONPATH: client:.", INSTALLER_WORKFLOW)
+
 
 if __name__ == "__main__":
     unittest.main()
