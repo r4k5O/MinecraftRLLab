@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform as platform_module
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,27 @@ def run(cmd: list[str], cwd: Path) -> None:
     print(" ".join(cmd))
     print("=" * 88 + "\n")
     subprocess.run(cmd, cwd=cwd, check=True)
+
+
+def make_nuitka_command(out: Path, client: Path, *, platform_name: str | None = None) -> list[str]:
+    platform_name = platform_name or platform_module.system()
+    cmd = [
+        sys.executable,
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--enable-plugin=pyside6",
+        "--show-scons",
+        "--show-progress",
+        "--assume-yes-for-downloads",
+        "--output-dir=" + str(out),
+        "--output-filename=MinecraftRLLab",
+        "--include-data-file=BUILD_INFO.json=BUILD_INFO.json",
+    ]
+    if platform_name == "Windows":
+        cmd.append("--low-memory")
+    cmd.append(str(client / "run_client.py"))
+    return cmd
 
 
 def main() -> int:
@@ -36,20 +58,7 @@ def main() -> int:
         "build_mode": "normal",
     }
     (client / "BUILD_INFO.json").write_text(json.dumps(build_info, indent=2), encoding="utf-8")
-    cmd = [
-        sys.executable,
-        "-m",
-        "nuitka",
-        "--standalone",
-        "--enable-plugin=pyside6",
-        "--show-scons",
-        "--show-progress",
-        "--assume-yes-for-downloads",
-        "--output-dir=" + str(out),
-        "--output-filename=MinecraftRLLab",
-        "--include-data-file=BUILD_INFO.json=BUILD_INFO.json",
-        str(client / "run_client.py"),
-    ]
+    cmd = make_nuitka_command(out, client)
     run(cmd, client)
     dist_dirs = list(out.glob("*.dist"))
     if not dist_dirs:
