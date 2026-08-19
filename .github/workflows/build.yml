@@ -17,7 +17,6 @@ env:
   PYTHON_VERSION: '3.13'
   JAVA_VERSION: '25'
   MCRL_VERSION: 0.3.0-dev
-  MCRL_FORGE_VISIBLE_LOG_LIMIT: '12000'
   MCRL_NUITKA_VISIBLE_LOG_LIMIT: '8000'
   MCRL_GRADLE_VISIBLE_LOG_LIMIT: '5000'
 
@@ -28,8 +27,6 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       build: ${{ steps.meta.outputs.build }}
-      mode: ${{ steps.forge.outputs.mode }}
-      forge: ${{ steps.forge.outputs.forge }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,21 +40,8 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "# 🔨 MinecraftRLLab Build #$BUILD" >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Dependencies: **prebuilt Python wheels**" >> "$GITHUB_STEP_SUMMARY"
           echo "Release starts as **Nightly / verification pending**." >> "$GITHUB_STEP_SUMMARY"
-      - name: Resolve build path
-        id: forge
-        env:
-          MCRL_FORGE_KEY: ${{ secrets.MCRL_FORGE_KEY }}
-        shell: bash
-        run: |
-          python tools/forge_gate.py --repo . --github-output "$GITHUB_OUTPUT"
-          MODE=$(grep '^mode=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
-          if [ "$MODE" = "full-source" ]; then
-            echo "🔥 A deeper furnace has awakened." >> "$GITHUB_STEP_SUMMARY"
-            echo "Build mode: **full-source**" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Build mode: **normal**" >> "$GITHUB_STEP_SUMMARY"
-          fi
 
   plugin:
     name: ☕ Paper 26.2 plugin
@@ -107,7 +91,7 @@ jobs:
   client:
     name: 🧠 Native client • ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
+    timeout-minutes: 180
     needs: metadata
     strategy:
       fail-fast: false
@@ -129,70 +113,31 @@ jobs:
             client/requirements.txt
             client/requirements-build.txt
 
-      - name: 🐧 Linux native prerequisites • normal
-        if: runner.os == 'Linux' && needs.metadata.outputs.mode == 'normal'
+      - name: 🐧 Linux native prerequisites
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y patchelf build-essential ccache libgl1 libegl1 libxkbcommon-x11-0
 
-      - name: 🐧 Linux native forge prerequisites
-        if: runner.os == 'Linux' && needs.metadata.outputs.mode == 'full-source'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang libclang-dev llvm-dev cmake ninja-build git perl pkg-config patchelf ccache \
-            libgl1 libegl1 libgl1-mesa-dev libegl1-mesa-dev libfontconfig1-dev libfreetype6-dev \
-            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
-            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
-            libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev \
-            libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev
-
-      - name: 🪟 Windows native forge prerequisites
-        if: runner.os == 'Windows' && needs.metadata.outputs.mode == 'full-source'
-        shell: pwsh
-        run: |
-          choco install llvm ninja cmake -y --no-progress
-          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: 📚 Install normal Python + native build dependencies
-        if: needs.metadata.outputs.mode == 'normal'
+      - name: 📚 Install Python + native build dependencies
         working-directory: client
         shell: bash
         run: |
           python -m pip install --upgrade pip wheel
           python -m pip install -r requirements-build.txt
 
-      - name: 🔥 Forge every application dependency from source
-        if: needs.metadata.outputs.mode == 'full-source'
-        env:
-          MCRL_FORGE_JOBS: '8'
-          MCRL_QT_REF: '6.11'
-          MCRL_PYSIDE_REF: '6.11'
-          MCRL_TORCH_REF: 'main'
-        shell: bash
-        run: |
-          python tools/full_source_deps.py --plan
-          python tools/log_mux.py \
-            --log .build-logs/full-source.log \
-            --max-visible "$MCRL_FORGE_VISIBLE_LOG_LIMIT" \
-            --sample-every 20 \
-            --head-lines 120 \
-            -- python tools/full_source_deps.py --work .forge/source --wheelhouse .forge/wheels
-
       - name: 🔎 Nuitka / compiler information
         shell: bash
         run: |
           python --version
           python -m nuitka --version
-          echo "Build mode: ${{ needs.metadata.outputs.mode }}"
+          echo "Dependency mode: prebuilt wheels"
 
       - name: 🧬 Generate + compile native application
         env:
           GITHUB_RUN_NUMBER: ${{ needs.metadata.outputs.build }}
           MCRL_VERSION: ${{ env.MCRL_VERSION }}
-          MCRL_BUILD_MODE: ${{ needs.metadata.outputs.mode }}
         shell: bash
         run: |
           python tools/log_mux.py \
@@ -277,13 +222,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.metadata.outputs.tag }}
           BUILD: ${{ needs.metadata.outputs.build }}
-          BUILD_MODE: ${{ needs.metadata.outputs.mode }}
         shell: bash
         run: |
-          MODE_LINE=""
-          if [ "$BUILD_MODE" = "full-source" ]; then
-            MODE_LINE="- 🔥 Application dependencies compiled from source"
-          fi
           cat > release-body.md <<BODY
           # 🌙 MinecraftRLLab Build #${BUILD}
 
@@ -294,7 +234,7 @@ jobs:
           - ✅ Paper 26.2 plugin built
           - ✅ Windows native client built
           - ✅ Linux native client built
-          ${MODE_LINE}
+          - 📦 Dependencies installed from prebuilt wheels
           - ⏳ Verification queued/running
           - Commit: \`${GITHUB_SHA}\`
           BODY
